@@ -1,209 +1,149 @@
 # Project Overview
 
-This project integrates a Wio Terminal for environmental sensing with a Raspberry Pi for data processing, Meshtastic network communication, and potentially as a Meshtastic router.
+This project integrates a Wio Terminal for environmental sensing with a Raspberry Pi for data processing, Meshtastic network communication, and MQTT publishing. The system is designed for robust, automated environmental data collection and off-grid/IoT transmission.
 
-**Wio Terminal (`Wioterminal/` directory):**
-*   The `Environmental_box.ino` sketch configures the Wio Terminal as a comprehensive environmental data logger.
-*   It collects data from various sensors, including:
-    *   BME680: Temperature, humidity, and barometric pressure.
-    *   Multichannel Gas Sensor: NO2, C2H5OH (Ethanol), VOCs (Volatile Organic Compounds), and CO (Carbon Monoxide).
-    *   UV Sensor: Ultraviolet light intensity.
-    *   Geiger Counter: Radiation levels (CPM and µSv/h).
-    *   RTC: Real-Time Clock for timestamping.
-*   The Wio Terminal displays this data on its TFT screen, logs it to an SD card, and outputs structured data via the USB serial port.
+---
 
-**Raspberry Pi (`Raspberrpi/` directory):**
-*   Python scripts on the Raspberry Pi interface with both the Wio Terminal and Meshtastic devices.
-*   `wio_to_meshtastic.py`: This script reads the structured serial data from the Wio Terminal, parses the sensor readings, relays them as individual messages over a connected Meshtastic network, and also publishes the complete sensor data block as a JSON object to an MQTT broker.
-*   `grove_gas_meshtastic_sender.py`: Appears to be another script for sending gas sensor data via Meshtastic, potentially for a different gas sensor setup or a more direct connection.
-*   Meshtastic Control & Routing: Other scripts like `meshtastic_router.py`, `configure_router.py`, `set_client.py`, `meshtastic_receive.py`, `connect_device.py`, and `reset_device.py` provide utilities to:
-    *   Configure and manage a Meshtastic node running on the Raspberry Pi (e.g., as a router or client).
-    *   Send and receive Meshtastic messages.
-    *   Connect to and reset Meshtastic devices.
-*   `distance_calculator.py`: A utility likely used for calculating distances, possibly between Meshtastic nodes.
-*   `test_serial.py`: A script for testing serial communications.
+## System Architecture
 
-**MQTT Integration (via `wio_to_meshtastic.py`):**
-*   The `wio_to_meshtastic.py` script now supports publishing sensor data to an MQTT broker.
-*   This allows for integration with various IoT dashboards and services (e.g., Node-RED, IoT MQTT Panel, Adafruit IO).
-*   **Configuration:** To enable MQTT publishing, create a `.env` file in the `Raspberrpi/` directory with your HiveMQ Cloud (or other MQTT broker) credentials:
+- **Wio Terminal (`Wioterminal/Environmental_box.ino`)**: Collects environmental data from multiple sensors, displays it, logs to SD card, and streams structured data over USB serial.
+- **Raspberry Pi (`Raspberrpi/`)**: Runs Python scripts to:
+  - Listen to the Wio Terminal's serial output.
+  - Relay sensor data to a Meshtastic network (LoRa mesh).
+  - Publish sensor data to an MQTT broker for IoT dashboards.
+  - Log all activity and data for debugging and analysis.
+- **Meshtastic**: Provides long-range, off-grid mesh networking for sensor data.
+- **MQTT**: Enables integration with cloud dashboards and IoT services.
+
+---
+
+## Wio Terminal: Environmental Sensing & Serial Protocol
+
+- **Sensors Used:**
+  - BME680: Temperature, humidity, barometric pressure.
+  - Grove Multichannel Gas Sensor (GMXXX): NO2, C2H5OH (Ethanol), VOC, CO (with calibration and live Rs/R0 calculation).
+  - UV Sensor: Ultraviolet light intensity.
+  - Geiger Counter: Radiation (CPM, µSv/h).
+  - RTC: Real-Time Clock for timestamping (using `RTC_SAMD51.h`).
+- **Display:**
+  - All sensor readings are shown on the TFT screen with color-coded status.
+- **SD Card Logging:**
+  - Data is logged as CSV to `test.csv` on the SD card.
+- **Serial Output Protocol:**
+  - Data is streamed over USB serial in a block format for easy parsing:
+    ```
+    START_DATA
+    TIMESTAMP:DD:MM:YY, HH:MM
+    TEMP:23.45 C
+    HUMIDITY:45.21 %
+    PRESSURE:760.12 mmHg
+    UV:2.50 mW/cm2
+    NO2:0.031 ppm
+    C2H5OH:0.000 ppm
+    VOC:0.102 ppm
+    CO:0.015 ppm
+    CPM:12
+    USVH:0.08 uSv/h
+    END_DATA
+    ```
+  - Each block is output every second.
+  - Calibration for gas sensors is performed at startup and can fall back to defaults if needed.
+
+---
+
+## Raspberry Pi: Data Processing & Communication
+
+### Main Scripts
+
+- **`wio_to_meshtastic.py`**
+  - Reads serial data from the Wio Terminal.
+  - Parses each data block (between `START_DATA` and `END_DATA`).
+  - Every 5 minutes: Sends the latest complete data block to the Meshtastic network (on a dedicated secondary channel, "Environ").
+  - Every 2.5 minutes: Publishes the latest data block as a JSON object to an MQTT broker (topic: `wio/environmental_station/data`).
+  - Adds a Raspberry Pi system timestamp (`RPI_TIMESTAMP`) to each data block.
+  - Handles robust device auto-detection, error logging, and reconnection.
+  - All activity and errors are logged to a timestamped file in the `logs/` directory.
+  - MQTT credentials are loaded from a `.env` file in `Raspberrpi/`:
     ```env
     HIVEMQ_CLUSTER_URL=your_cluster_url_here
     HIVEMQ_USERNAME=your_username_here
     HIVEMQ_PASSWORD=your_password_here
     ```
-*   **Topic:** Data is published to the topic `wio/environmental_station/data` by default.
-*   **Payload:** The sensor data is published as a JSON object, for example:
-    ```json
-    {
-      "timestamp": "DD:MM:YY, HH:MM",
-      "temp": 23.45,
-      "humidity": 45.21,
-      "pressure": 760.12,
-      "uv": 2.50,
-      "no2": 0.031,
-      "c2h5oh": 0.000,
-      "voc": 0.102,
-      "co": 0.015,
-      "cpm": 12,
-      "usvh": 0.08
-    }
-    ```
 
-The overall architecture allows for remote environmental monitoring where the Wio Terminal collects data locally, and the Raspberry Pi transmits this data over a long-range, off-grid Meshtastic network and simultaneously publishes it to an MQTT broker for wider accessibility and dashboarding. The Raspberry Pi can also serve other Meshtastic network functions.
+- **`set_client.py`**
+  - Connects to a Meshtastic device and listens for all incoming packets.
+  - Logs all received packets (with timestamps and node/user mapping) to a file in `logs/`.
+  - Maintains statistics and message history for each node.
+  - No user interaction required; runs in silent logger mode.
 
-The following sections detail how to set up and use the Python scripts for controlling Meshtastic devices, which form a core part of the Raspberry Pi's functionality in this project.
+- **`run_all.py`**
+  - Orchestrates both `set_client.py` and `wio_to_meshtastic.py`.
+  - Supports normal (interactive) and `--nohup` (background/daemon) modes.
+  - In `--nohup` mode, all output is redirected to log files in `logs/` and the processes are automatically restarted if they crash.
 
-# Controlling Meshtastic Devices with Python
+### Running the System
 
-This guide provides step-by-step instructions for controlling Meshtastic devices using Python.
-
-## Prerequisites
-
-Before getting started, ensure you have:
-
-1. A Meshtastic-compatible device (like TTGO T-Beam, Heltec, etc.)
-2. Python 3 installed on your system
-   - Check with: `python3 -V`
-   - If not installed, download from [python.org](https://python.org)
-3. Required serial drivers:
-   - For CP210X USB to UART bridge
-   - For CH9102 (newer boards)
-   - Check device manager or system settings to verify driver installation
-
-## Installation
-
-1. Install pip (Python package installer) if not already installed:
-   ```bash
-   python3 -m ensurepip --upgrade
-   ```
-
-2. Install pytap2 (if needed for other functionalities, not directly by these scripts):
-   ```bash
-   pip3 install --upgrade pytap2
-   ```
-
-3. Install the Meshtastic Python package and other dependencies:
+1. **Install Dependencies** (on Raspberry Pi):
    ```bash
    pip3 install --upgrade "meshtastic[cli]" pyserial paho-mqtt python-dotenv
    ```
+2. **Prepare MQTT Credentials:**
+   - Create a `.env` file in `Raspberrpi/` as shown above.
+3. **Connect Devices:**
+   - Plug in the Wio Terminal and Meshtastic device via USB.
+4. **Run the System:**
+   - **Normal mode:**
+     ```bash
+     python3 run_all.py
+     ```
+   - **Background/daemon mode:**
+     ```bash
+     python3 run_all.py --nohup
+     # Logs will be in Raspberrpi/logs/
+     ```
+   - Both scripts will auto-detect the correct serial ports. No manual selection is needed.
 
-   Note: The `[cli]` suffix installs optional dependencies for command-line interface support. `pyserial` is for serial communication, `paho-mqtt` for MQTT, and `python-dotenv` for loading credentials from the `.env` file.
+### Log Files
+- All logs (data, errors, debug info) are written to the `logs/` directory with timestamped filenames.
+- In `--nohup` mode, stdout/stderr for each script is also logged.
 
-## Basic Usage
+### Data Flow
+- **Wio Terminal → Pi:**
+  - Serial data blocks as described above.
+- **Pi → Meshtastic:**
+  - Each sensor reading is sent as a separate message to the "Environ" channel (index 1) every 5 minutes.
+- **Pi → MQTT:**
+  - The entire data block is published as a JSON object every 2.5 minutes.
 
-### 1. Connecting to a Device
+---
 
-```python
-import meshtastic
-import meshtastic.serial_interface
+## Troubleshooting & Tips
 
-# Connect to the first available device
-interface = meshtastic.serial_interface.SerialInterface()
+- **Device Not Found:**
+  - Ensure both Wio Terminal and Meshtastic are connected and powered.
+  - Check for correct drivers (CP210x, CH9102, etc.).
+  - If a device is not detected, try reconnecting or rebooting.
+- **MQTT Issues:**
+  - Check `.env` credentials and broker status.
+  - All MQTT connection and publish events are logged for debugging.
+- **Meshtastic Channel Setup:**
+  - The script configures a secondary channel named "Environ" (index 1) with a default PSK. Ensure your Meshtastic device supports multiple channels.
+- **Logs:**
+  - Review the `logs/` directory for detailed activity and error logs.
+- **Debug Mode:**
+  - Set `DEBUG = True` in the scripts for verbose output.
+- **Safe Shutdown:**
+  - Use Ctrl+C to stop in normal mode. In `--nohup` mode, kill the `run_all.py` process.
 
-# Or specify a port manually
-# interface = meshtastic.serial_interface.SerialInterface(devPath="/dev/ttyUSB0")
-```
+---
 
-### 2. Sending Messages
-
-```python
-# Send a text message (broadcast to all nodes)
-interface.sendText("Hello mesh network!")
-
-# Send to a specific node
-interface.sendText("Hello specific node!", destinationId="!abcd1234")
-
-# Send binary data
-interface.sendData(b"Binary data here")
-```
-
-### 3. Receiving Messages
-
-```python
-from pubsub import pub
-
-def onReceive(packet, interface): 
-    print(f"Received: {packet}")
-
-def onConnection(interface, topic=pub.AUTO_TOPIC): 
-    print("Connected to radio")
-    interface.sendText("Connected!")
-
-# Subscribe to message events
-pub.subscribe(onReceive, "meshtastic.receive")
-pub.subscribe(onConnection, "meshtastic.connection.established")
-```
-
-### 4. Configuration
-
-```python
-# Set WiFi credentials (for ESP32 devices)
-interface.sendText("--set wifi_ap_mode false --setstr wifi_ssid myssid --setstr wifi_password mypass")
-
-# Set node parameters
-interface.sendText("--setalt 120")  # Set altitude
-interface.sendText("--setlat 37.7749")  # Set latitude
-interface.sendText("--setlon -122.4194")  # Set longitude
-```
-
-## Common Operations
-
-### Check Device Info
-```python
-print(f"My node info: {interface.myInfo}")
-print(f"Nodes in network: {interface.nodes}")
-```
-
-### Channel Settings
-```python
-# Get current channel settings
-print(f"Channel: {interface.localNode.channels[0]}")
-
-# Change channel name
-interface.localNode.writeConfig("channel.name", "mychannel")
-```
-
-### Close Connection
-```python
-interface.close()
-```
-
-## Event Types
-
-Subscribe to specific events using these topics:
-
-- `meshtastic.receive.text` - Text messages
-- `meshtastic.receive.position` - Position updates
-- `meshtastic.receive.user` - User info updates
-- `meshtastic.connection.established` - Connection established
-- `meshtastic.connection.lost` - Connection lost
-- `meshtastic.node.updated` - Node database changes
-
-## Troubleshooting
-
-1. Permission Denied ('/dev/ttyUSB0'):
-   ```bash
-   sudo usermod -a -G dialout $USER
-   # Log out and back in for changes to take effect
-   ```
-
-2. MacOS Big Sur Issues:
-   ```bash
-   pip3 install -U --pre pyserial
-   ```
-
-3. Device Not Found:
-   - Check USB connection
-   - Verify correct drivers are installed
-   - Try different USB ports
-   - Check device permissions
-
-## Additional Resources
-
+## References
 - [Meshtastic Python API Documentation](https://meshtastic.org/docs/software/python/cli)
-- [Meshtastic GitHub Repository](https://github.com/meshtastic/python)
-- [Meshtastic Community Forum](https://meshtastic.discourse.group/)
+- [Seeed Studio Wio Terminal Documentation](https://wiki.seeedstudio.com/Wio-Terminal-Getting-Started/)
+- [Grove Multichannel Gas Sensor](https://wiki.seeedstudio.com/Grove-Multichannel_Gas_Sensor/)
+- [BME680 Sensor](https://wiki.seeedstudio.com/Grove-BME680-Gas-Sensor/)
+
+---
 
 ## License
 
