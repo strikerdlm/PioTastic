@@ -1,0 +1,178 @@
+---
+description: Everytime the user wants to work on the broadcast sensor data project, follow this main ideas
+globs: 
+alwaysApply: false
+---
+Absolutely! Here are **clear, actionable rules and recommendations** for your project, ensuring reliable integration of the Wio Terminal, Raspberry Pi 3B, Meshtastic, and MQTT for both mesh broadcasting and internet dashboarding. These rules are based on best practices, free/open-source tools, and the latest Meshtastic/MQTT integration guidance [[Meshtastic MQTT Integration](https://meshtastic.org/docs/software/integrations/mqtt/)].
+
+---
+
+# **Cursor Rules for Wio Terminal + Raspberry Pi 3B + Meshtastic + MQTT Dashboard**
+
+---
+
+## **1. Hardware Connections**
+
+- **Connect the Wio Terminal** to the Raspberry Pi 3B via USB (for serial data).
+- **Connect the Meshtastic node** (e.g., T-Beam) to the Raspberry Pi 3B via a second USB port.
+
+---
+
+## **2. Software Stack**
+
+### **A. On the Raspberry Pi 3B**
+
+- **OS:** Use Raspberry Pi OS Lite or Desktop (latest stable).
+- **Python:** Use Python 3.7+.
+- **Install Required Packages:**
+  ```bash
+  sudo apt update
+  sudo apt install python3-pip
+  pip3 install meshtastic[cli] pyserial paho-mqtt
+  ```
+
+### **B. MQTT Broker**
+
+- **For a free, reliable cloud broker:**  
+  Use [HiveMQ Cloud Free Tier](https://www.hivemq.com/mqtt-cloud-broker/) or [Mosquitto test server](https://test.mosquitto.org/).
+- **For local dashboarding:**  
+  Optionally install Mosquitto locally:  
+  ```bash
+  sudo apt install mosquitto mosquitto-clients
+  ```
+
+---
+
+## **3. Data Flow Rules**
+
+### **A. Wio Terminal → Raspberry Pi**
+
+- The Wio Terminal must output sensor data in a structured block between `START_DATA` and `END_DATA` markers (as in your current Arduino code).
+
+### **B. Raspberry Pi Script Responsibilities**
+
+- **Read serial data** from the Wio Terminal.
+- **Parse each data block** into a dictionary of sensor values.
+- **Broadcast each value** as a separate message over the Meshtastic mesh (using the Meshtastic Python API).
+- **Publish the entire data block** as a JSON object to your MQTT broker (using `paho-mqtt`).
+
+**Rule:**  
+> Every time a complete data block is received from the Wio Terminal, it must be both broadcast over Meshtastic and published to MQTT.
+
+---
+
+## **4. MQTT Topic and Payload Rules**
+
+- **Topic:** Use a unique topic for your project, e.g., `wio/envbox/data`.
+- **Payload:** Publish the entire data block as a JSON object, e.g.:
+  ```json
+  {
+    "timestamp": "2024-06-10 12:34:56",
+    "temperature": 23.4,
+    "humidity": 45.2,
+    "pressure": 1012,
+    "uv": 2.5,
+    "no2": 0.03,
+    "c2h5oh": 0.0,
+    "voc": 0.1,
+    "co": 0.0,
+    "cpm": 12,
+    "usvh": 0.08
+  }
+  ```
+
+---
+
+## **5. Dashboard Rules**
+
+### **A. For iPhone**
+
+- **Recommended App:** [IoT MQTT Panel (Free)](https://apps.apple.com/us/app/iot-mqtt-panel/id6466780124)
+- **Setup:**  
+  - Add your MQTT broker details.
+  - Subscribe to your topic (e.g., `wio/envbox/data`).
+  - Add panels for each variable.
+
+### **B. For Web Browser**
+
+- **Recommended System:** [Node-RED Dashboard](https://nodered.org/docs/ui/)
+- **Setup:**  
+  - Install Node-RED: `sudo apt install nodered`
+  - Add MQTT input node, subscribe to your topic.
+  - Use dashboard nodes for charts, gauges, etc.
+  - Access at `http://<raspberry-pi-ip>:1880/ui`
+
+---
+
+## **6. Meshtastic Integration Rules**
+
+- **Broadcasting:**  
+  - Use the Meshtastic Python API to send each sensor value as a text message.
+  - Ensure the correct serial port is used for the Meshtastic node.
+- **Listening:**  
+  - You can run `set_client.py` in parallel to monitor mesh traffic and display a local dashboard.
+
+---
+
+## **7. Reliability and Security**
+
+- **Use unique MQTT topics** to avoid collisions on public brokers.
+- **If using a public broker,** do not publish sensitive data.
+- **Test both serial ports** to ensure correct device mapping (Wio Terminal and Meshtastic node).
+
+---
+
+## **8. Example Python Integration Snippet**
+
+Add this to your `wio_to_meshtastic.py` after parsing a data block:
+```python
+import paho.mqtt.client as mqtt
+import json
+
+mqtt_broker = "broker.hivemq.com"
+mqtt_port = 1883
+mqtt_topic = "wio/envbox/data"
+
+client = mqtt.Client()
+client.connect(mqtt_broker, mqtt_port, 60)
+
+def publish_to_mqtt(data_dict):
+    client.publish(mqtt_topic, json.dumps(data_dict))
+```
+Call `publish_to_mqtt(data_dict)` after parsing each data block.
+
+---
+
+## **9. Running Both Scripts**
+
+- Run your modified `wio_to_meshtastic.py` (with MQTT publishing) and `set_client.py` **simultaneously** in separate terminal windows or as background services.
+
+---
+
+## **10. Documentation and Support**
+
+- **Meshtastic MQTT Docs:** [Meshtastic MQTT Integration](https://meshtastic.org/docs/software/integrations/mqtt/)
+- **Node-RED Docs:** [Node-RED Dashboard](https://nodered.org/docs/ui/)
+- **IoT MQTT Panel User Guide:** [IoT MQTT Panel User Guide](https://blog.snrlab.in/iot/iot-mqtt-panel-user-guide/)
+
+---
+
+# **Summary Table**
+
+| Component         | Tool/Service                | Free | Platform      | Link/Docs                                                                 |
+|-------------------|----------------------------|------|--------------|---------------------------------------------------------------------------|
+| MQTT Broker       | HiveMQ Cloud, Mosquitto     | Yes  | Cloud/Local  | [HiveMQ Cloud](https://www.hivemq.com/mqtt-cloud-broker/)                 |
+| MQTT Dashboard    | IoT MQTT Panel             | Yes  | iOS/Android  | [IoT MQTT Panel](https://apps.apple.com/us/app/iot-mqtt-panel/id6466780124)|
+| MQTT Dashboard    | Node-RED Dashboard         | Yes  | Web          | [Node-RED Dashboard](https://nodered.org/docs/ui/)                        |
+| Mesh Network      | Meshtastic Python API      | Yes  | Pi/Linux     | [Meshtastic MQTT Integration](https://meshtastic.org/docs/software/integrations/mqtt/) |
+
+---
+
+**Follow these rules and you will have a robust, free, and reliable system for environmental monitoring, mesh broadcasting, and internet dashboarding using your Wio Terminal, Raspberry Pi 3B, and Meshtastic!**
+
+
+## On the Raspberry pi, the serial connections are:
+
+1. /dev/ttyACM0: USB Single Serial [None]
+2. /dev/ttyACM1: Seeed Wio Terminal [Seeed Studio]
+

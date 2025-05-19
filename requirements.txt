@@ -1,0 +1,8 @@
+meshtastic[cli]
+pyserial
+pypubsub
+tabulate
+protobuf
+rich
+paho-mqtt
+python-dotenv

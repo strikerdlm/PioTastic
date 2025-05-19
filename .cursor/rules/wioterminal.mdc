@@ -1,0 +1,8 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+- When writing code for the Wio Terminal ONLY use the official libraries from seeed studio for each of the sensors in the Wio Terminal
+
+- For RTC use: #include "RTC_SAMD51.h"         // For Real Time Clock
